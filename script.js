@@ -1,5 +1,5 @@
 /* ─── Config ──────────────────────────────────────────────────── */
-const API_URL = 'https://mansik-santulan-score-x470.onrender.com';
+const API_URL = 'https://mansik-santulan-score-x470.onrender.com/predict';
 
 /* ─── Element References ──────────────────────────────────────── */
 const form        = document.getElementById('predict-form');
