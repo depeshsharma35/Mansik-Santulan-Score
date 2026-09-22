@@ -1,15 +1,45 @@
 /* ─── Config ──────────────────────────────────────────────────── */
-const API_URL = 'https://mansik-santulan-score-x470.onrender.com/predict';
+const API_BASE = 'https://mansik-santulan-score-x470.onrender.com';
+const API_URL  = `${API_BASE}/predict`;
+
+/* ─── Wake-up Ping (fixes Render free-tier cold start) ───────── */
+/**
+ * Render free tier sleeps the server after ~15 min of inactivity.
+ * The first request during a cold start can take 30–60 s to respond.
+ * We ping GET / first, show a friendly status message, and only then
+ * fire the real POST /predict — so the prediction never gets lost.
+ */
+async function wakeUpServer(onStatus) {
+  const PING_TIMEOUT_MS  = 90_000; // wait up to 90 s for cold start
+  const controller       = new AbortController();
+  const timer            = setTimeout(() => controller.abort(), PING_TIMEOUT_MS);
+
+  try {
+    onStatus('Waking up server… this may take up to 60 s on first use ☕');
+    const res = await fetch(`${API_BASE}/`, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`Health check returned ${res.status}`);
+    onStatus(''); // clear status
+    return true;
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === 'AbortError') {
+      throw new Error('Server took too long to wake up. Please try again in a moment.');
+    }
+    throw new Error('Cannot reach the server. Check your internet connection.');
+  }
+}
 
 /* ─── Element References ──────────────────────────────────────── */
 const form        = document.getElementById('predict-form');
-const submitBtn   = document.getElementById('submit-btn');
-const formError   = document.getElementById('form-error');
-const resultSec   = document.getElementById('result-section');
-const scoreNumber = document.getElementById('score-number');
-const scoreLabel  = document.getElementById('score-label');
-const gaugeFill   = document.getElementById('gauge-fill');
-const retryBtn    = document.getElementById('retry-btn');
+const submitBtn    = document.getElementById('submit-btn');
+const formError    = document.getElementById('form-error');
+const serverStatus = document.getElementById('server-status');
+const resultSec    = document.getElementById('result-section');
+const scoreNumber  = document.getElementById('score-number');
+const scoreLabel   = document.getElementById('score-label');
+const gaugeFill    = document.getElementById('gauge-fill');
+const retryBtn     = document.getElementById('retry-btn');
 
 /* ─── Gauge Constants ─────────────────────────────────────────── */
 const CIRCUMFERENCE = 2 * Math.PI * 80; // 502.65
@@ -102,6 +132,17 @@ function clearError() {
   formError.hidden = true;
 }
 
+/* ─── Server Status Message ───────────────────────────────────── */
+function showStatus(msg) {
+  if (msg) {
+    serverStatus.textContent = msg;
+    serverStatus.hidden = false;
+  } else {
+    serverStatus.textContent = '';
+    serverStatus.hidden = true;
+  }
+}
+
 /* ─── Build Payload ───────────────────────────────────────────── */
 function buildPayload() {
   return {
@@ -164,6 +205,7 @@ function setLoading(on) {
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   clearError();
+  showStatus('');
   resultSec.hidden = true;
 
   const { valid, errors } = validateForm();
@@ -177,11 +219,18 @@ form.addEventListener('submit', async (e) => {
   setLoading(true);
 
   try {
+    // ── Step 1: Wake up the Render server if it's sleeping ────────
+    await wakeUpServer(showStatus);
+
+    // ── Step 2: Send the actual prediction request ─────────────────
+    showStatus('Analysing your data…');
     const response = await fetch(API_URL, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(payload),
     });
+
+    showStatus('');
 
     if (!response.ok) {
       const errBody = await response.json().catch(() => null);
@@ -210,11 +259,8 @@ form.addEventListener('submit', async (e) => {
     showResult(score);
 
   } catch (err) {
-    if (err instanceof TypeError && err.message.includes('fetch')) {
-      showError('Cannot reach the server. Make sure your FastAPI backend is running on http://127.0.0.1:8000');
-    } else {
-      showError('An unexpected error occurred: ' + err.message);
-    }
+    showStatus('');
+    showError(err.message || 'An unexpected error occurred. Please try again.');
   } finally {
     setLoading(false);
   }
